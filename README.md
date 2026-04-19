@@ -1,68 +1,142 @@
-# AGVPN (Antigravity VPN Manager)
+# SVPN - Server VPN Manager for Linux
 
-AGVPN 是一个专为 Linux 服务器设计的轻量化、可靠且稳定的按需 VPN 管理程序，核心基于强大的 [Mihomo](https://github.com/MetaCubeX/mihomo)（原 Clash Meta）。
+SVPN is a lightweight, reliable VPN manager designed for **any Linux server** that needs external internet access. Built on [Mihomo](https://github.com/MetaCubeX/mihomo) (Clash Meta), it provides on-demand proxy services **without disrupting any existing services** running on your server.
 
-它可以极大地解决诸如 Antigravity 这种 AI 工具在运行于中国大陆服务器上时由于网络封锁导致的鉴权与服务连通性问题，同时 **绝不会影响** 您服务器上原本对外提供访问的其他 API 或者既有业务。
+Whether your server is behind a firewall, in a restricted network, or simply needs access to global resources (GitHub, Google, Docker Hub, npm, PyPI, etc.), SVPN gets you connected safely.
 
-## 🌟 特点
+## Features
 
-*   **开箱即用，自动配置**：纯 Python 3 编写，无冗杂第三方库依赖。首次执行开启命令时，可智能识别操作系统与架构（兼容 Linux amd64/arm64 与 macOS），不仅会自动为您从国内镜像加速拉取正确版本的代理内核，还会友好引导您填入订阅信息。
-*   **按需局部代理，绝对安全**：AGVPN 采用本地端口守候模式（默认在 `127.0.0.1:7890` 提供 HTTP/SOCKS5 代理服务）。在未显式给其他程序声明代理环境变量的情况下，**您服务器上的所有其他程序对外界互访将完全保持原始直连网络，不会被此系统网关劫持**，绝对保证了服务器原本业务系统和开放 API 的高度可用性。
-*   **内置智能分流网络**：本程序内置预设的地理位置和域名直连规则集，即便是接入了代理的环境下，对中国大陆 IP （包含局域网 IP）或受信任的常用程序的请求均会走直连网络以保证最高响应速度，只有涉及 Google 或被阻断的请求才会智能流失给海外节点。
-*   **自动测速优选节点功能**：通过核心代理的 URL-Test 策略，能在后台无感、持续地去测试订阅池内的所有节点真实访问延迟，并智能地随时为您将通信切换到当前最为顺畅的线路连接。
+- **Plug and Play**: Pure Python 3, no third-party dependencies. Automatically detects OS and architecture (Linux amd64/arm64, macOS), downloads the correct proxy core from GitHub mirrors, and guides you through subscription setup.
+- **On-Demand Proxy, Zero Disruption**: SVPN runs a local proxy (default `127.0.0.1:7890` for HTTP/SOCKS5). **No iptables, no system-wide routing changes** — your existing services, APIs, and applications continue to work exactly as before. Only programs that explicitly use the proxy will route through VPN.
+- **Smart Routing**: Built-in geographic and domain-based rules ensure that traffic to local networks, private IPs, and domestic (CN) destinations goes direct, while only blocked or overseas traffic uses the VPN tunnel.
+- **Auto Best-Node Selection**: URL-Test strategy continuously measures latency across all nodes in your subscription and automatically switches to the fastest one.
+- **Multiple GitHub Mirrors**: Automatically tries several GitHub mirror sites for downloading the core binary, ensuring reliable installation even in restricted networks.
 
----
+## Quick Start
 
-## 🚀 快速开始
+### 1. Get the code
 
-### 1. 下载该代码项目
-使用 `git clone` 获取本仓库，或直接打包本工程 `agvpn.py` 存放到您的服务器任意位置上。
-
-### 2. 启动代理服务
-进入该工具的目录，执行：
 ```bash
-python3 agvpn.py start
+git clone https://github.com/Wenjin412/VPN-For-Antigravity-On-Linux-Server.git
+cd VPN-For-Antigravity-On-Linux-Server
 ```
-首次执行时，程序会：
-1. **自动下载并安装** 当前系统所兼容的 Mihomo 核心。
-2. 提示您 **输入代理节点订阅 URL**（输入通过相关服务商获取到的 Base64/Clash/Mihomo 订阅链接即可）。
-3. 自动生成无缝连接配置（`config.yaml`）并在后台创建安全的守护进程供您调用。
 
-*(成功后屏幕上会打出 `Started Mihomo in background` 等成功信息)*
+### 2. Start the proxy
 
-### 3. 给需要的应用开启通行挂载
-在同一个终端（Terminal / Bash Session）会话内，只需先宣告下面两行代理环境变量指定命令，然后再启动您那被网络封锁的目标应用（如 Antigravity IDE 程序）：
+```bash
+python3 svpn.py start
+```
 
+On first run, SVPN will:
+1. **Download and install** the Mihomo proxy core (auto-detected for your platform).
+2. **Prompt for your subscription URL** (supports Base64, Clash YAML, and Mihomo formats).
+3. **Generate configuration** and start the proxy daemon in the background.
+
+### 3. Enable VPN for your applications
+
+**Option A: Set environment variables (recommended)**
+
+```bash
+# Print the environment commands
+python3 svpn.py env
+
+# Or set them directly:
+export http_proxy=http://127.0.0.1:7890
+export https_proxy=http://127.0.0.1:7890
+export all_proxy=socks5://127.0.0.1:7890
+
+# Now run any command that needs internet access:
+git clone https://github.com/some/repo.git
+curl https://www.google.com
+pip install some-package
+docker pull some-image
+```
+
+**Option B: For a single command**
+
+```bash
+http_proxy=http://127.0.0.1:7890 https_proxy=http://127.0.0.1:7890 curl https://www.google.com
+```
+
+**Option C: Persistent proxy for all new shells**
+
+Add to `~/.bashrc` or `~/.profile`:
 ```bash
 export http_proxy=http://127.0.0.1:7890
 export https_proxy=http://127.0.0.1:7890
-
-# 接下来按照平日方式正常启动你的业务程序即可正常越过防火墙运作
-...
+export all_proxy=socks5://127.0.0.1:7890
 ```
 
----
+### 4. Test connectivity
 
-## 🛠️ CLI 高级命令一览
+```bash
+python3 svpn.py test
+```
 
-可通过查阅 `python3 agvpn.py -h` 随时获取帮助指引文档。
+## CLI Reference
 
-- **`python3 agvpn.py start`**：启动后台 VPN 进程。（自带环境安装自检与首轮参数引导）
-- **`python3 agvpn.py status`**：获取代理当前的运行连接状态以及当前正在被利用发包的 "最优出站节点" 名称。
-- **`python3 agvpn.py stop`**：安全且干净利落地停闭后台的 VPN 引擎守护进程并无损地收回被占用资源的端口。
-- **`python3 agvpn.py add-sub "URL"`**：主动通过命令添加或静默替换在用的翻墙提供商的更新源订阅地址。
-- **`python3 agvpn.py update`**：立即通知底层内核向服务器拉取订阅链接的最新状态，实现无缝刷新（加入上游新节点，踢出下架节点）。
-- **`python3 agvpn.py best`**：主动迫使内核立即开启对包含于订阅的全体节点进行一次强制并发式延迟体测检查，并马上选用响应最棒的服务端点作为后续承接。
-- **`python3 agvpn.py install`**：供系统环境受损希望强行再次下载修复替换最新纯净 Mihomo 二进制核心时使用。
+```
+python3 svpn.py <command>
 
-## 📜 运行产生的目录结构
+Commands:
+  start        Start the VPN proxy service
+  stop         Stop the VPN proxy service
+  status       Check proxy status and current best node
+  test         Test connectivity (Google, GitHub)
+  env          Print proxy environment variable export commands
+  install      Download/reinstall the proxy core
+  add-sub URL  Add or update subscription URL
+  update       Refresh subscription (pull new/removed nodes)
+  best         Test all nodes and switch to the fastest one
+```
 
-正常使用期间，脚本根目录下会自动创建一个独立安全、用于放置数据资料的 `data` 目录：
-```text
+## How It Works
+
+```
+┌──────────────────────────────────────────────────┐
+│                  Your Linux Server                │
+│                                                   │
+│  ┌─────────┐  ┌─────────┐  ┌─────────────────┐  │
+│  │  App A   │  │  App B   │  │ Existing APIs   │  │
+│  │(proxy on)│  │(proxy on)│  │ (no proxy set)  │  │
+│  └────┬─────┘  └────┬─────┘  └───────┬─────────┘  │
+│       │              │                │            │
+│       ▼              ▼                ▼            │
+│  ┌─────────────────────────┐    Direct out        │
+│  │   SVPN (Mihomo proxy)   │                      │
+│  │   127.0.0.1:7890        │                      │
+│  └───────────┬─────────────┘                      │
+│              │ VPN tunnel                          │
+└──────────────┼────────────────────────────────────┘
+               ▼
+        ┌──────────────┐
+        │  VPN Server   │
+        │  (overseas)   │
+        └──────┬───────┘
+               │
+               ▼
+         Internet (Google, GitHub, etc.)
+```
+
+- Apps **with** proxy env vars → route through VPN → access blocked sites
+- Apps **without** proxy env vars → direct connection → not affected at all
+- Your web APIs, database connections, internal services all continue working normally
+
+## Data Directory
+
+SVPN creates a `data/` directory alongside the script:
+
+```
 data/
- ├── mihomo         # (系统自动获取的适用于机器的运行二进制环境)
- ├── mihomo.pid     # (守护进程ID锚定点)
- ├── mihomo.log     # (核心打印的连接请求与日常排查用日志文件)
- ├── sub_url.txt    # (您写入注册的节点订阅链接配置持久化)
- └── config.yaml    # (本程序为您量身自动输出的基础分流和路由配置文件)
+├── mihomo          # Proxy core binary
+├── mihomo.pid      # Process ID file
+├── mihomo.log      # Runtime logs
+├── sub_url.txt     # Saved subscription URL
+└── config.yaml     # Generated routing configuration
 ```
+
+## Requirements
+
+- Python 3.6+
+- Linux (amd64/arm64) or macOS
+- A valid proxy subscription URL (from your VPN service provider)
