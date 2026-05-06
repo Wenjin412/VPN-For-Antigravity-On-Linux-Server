@@ -21,10 +21,13 @@ import signal
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.yaml")
 SUB_FILE = os.path.join(DATA_DIR, "sub_url.txt")
+FILTER_FILE = os.path.join(DATA_DIR, "node_filter.txt")
 PID_FILE = os.path.join(DATA_DIR, "mihomo.pid")
 MIHOMO_BIN = os.path.join(DATA_DIR, "mihomo")
 PROXY_PORT = 7890
 API_PORT = 9090
+# Default filter: empty string means use all nodes
+DEFAULT_NODE_FILTER = ""
 US_NODE_FILTER = r"(?i)(^|[^\w])(US|USA|United States|America|美国)([^\w]|$)"
 
 GH_MIRRORS = [
@@ -114,6 +117,23 @@ def get_subscription():
         url = f.read().strip()
         return url if url else None
 
+def set_node_filter(filter_pattern):
+    """Set node filter pattern. Empty string means use all nodes."""
+    ensure_data_dir()
+    with open(FILTER_FILE, "w") as f:
+        f.write(filter_pattern.strip())
+    if filter_pattern:
+        print(f"Node filter saved: '{filter_pattern}'")
+    else:
+        print("Node filter cleared (will use all nodes)")
+
+def get_node_filter():
+    """Get node filter pattern. Returns empty string if not set (use all nodes)."""
+    if not os.path.exists(FILTER_FILE):
+        return DEFAULT_NODE_FILTER
+    with open(FILTER_FILE, "r") as f:
+        return f.read().strip()
+
 def generate_config():
     sub_url = get_subscription()
     if not sub_url:
@@ -123,6 +143,9 @@ def generate_config():
             print("A valid subscription URL is required to continue.")
             sys.exit(1)
         set_subscription(sub_url)
+
+    node_filter = get_node_filter()
+    filter_line = f"    filter: '{node_filter}'" if node_filter else ""
 
     config_yaml = f"""\
 mixed-port: {PROXY_PORT}
@@ -155,7 +178,7 @@ proxy-groups:
     type: url-test
     use:
       - svpn-provider
-    filter: '{US_NODE_FILTER}'
+{filter_line}
     url: 'http://www.gstatic.com/generate_204'
     interval: 300
     tolerance: 50
@@ -376,8 +399,46 @@ def status_proxy():
         print(f"Active node (auto-selected): {now_active}")
         all_proxies = resp.get("all", [])
         print(f"Available proxies: {len(all_proxies)}")
+        node_filter = get_node_filter()
+        if node_filter:
+            print(f"Node filter: '{node_filter}'")
+        else:
+            print("Node filter: (none - using all nodes)")
     else:
         print("VPN proxy is running but API is inaccessible (maybe starting up?).")
+
+def list_nodes():
+    """List all available nodes from the subscription."""
+    if not is_running():
+        print("VPN proxy must be running. Run 'start' first.")
+        return
+
+    resp = api_request("GET", "/providers/proxies/svpn-provider")
+    if not resp:
+        print("Failed to get node list. Try 'update' to refresh subscription.")
+        return
+
+    proxies = resp.get("proxies", [])
+    if not proxies:
+        print("No proxies found in subscription.")
+        return
+
+    print(f"Total nodes in subscription: {len(proxies)}")
+    print("\nAvailable nodes:")
+    print("-" * 50)
+    for i, proxy in enumerate(proxies, 1):
+        name = proxy.get("name", "Unknown")
+        node_type = proxy.get("type", "Unknown")
+        alive = proxy.get("alive", False)
+        delay = proxy.get("history", [{}])[-1].get("delay", "N/A") if proxy.get("history") else "N/A"
+        status = "✓" if alive else "✗"
+        print(f"  {i:3d}. [{status}] {name} ({node_type}) - {delay}ms")
+    print("-" * 50)
+    print(f"\nCurrent filter: '{get_node_filter()}'" if get_node_filter() else "\nCurrent filter: (none - using all nodes)")
+    print("\nTo filter nodes, use: python3 svpn.py set-filter '<regex_pattern>'")
+    print("Examples:")
+    print("  python3 svpn.py set-filter '(?i)us|美国'  # US nodes only")
+    print("  python3 svpn.py set-filter ''             # Use all nodes")
 
 def update_subscription():
     if not is_running():
@@ -460,9 +521,13 @@ def main():
     subparsers.add_parser("test", help="Test connectivity through the VPN proxy")
     subparsers.add_parser("env", help="Print proxy environment variable commands")
     subparsers.add_parser("setup-env", help="Configure proxy environment in ~/.bashrc")
+    subparsers.add_parser("nodes", help="List all available nodes from subscription")
 
     parser_add_sub = subparsers.add_parser("add-sub", help="Add or update subscription URL")
     parser_add_sub.add_argument("url", help="Subscription URL")
+
+    parser_set_filter = subparsers.add_parser("set-filter", help="Set node filter regex (empty to use all)")
+    parser_set_filter.add_argument("pattern", nargs="?", default="", help="Regex pattern to filter nodes")
 
     args = parser.parse_args()
 
@@ -486,6 +551,13 @@ def main():
         shell_env()
     elif args.command == "setup-env":
         setup_persistent_proxy()
+    elif args.command == "nodes":
+        list_nodes()
+    elif args.command == "set-filter":
+        set_node_filter(args.pattern)
+        if is_running():
+            print("\nRestart VPN to apply new filter:")
+            print("  python3 svpn.py stop && python3 svpn.py start")
     else:
         parser.print_help()
 

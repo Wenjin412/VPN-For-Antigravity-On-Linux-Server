@@ -65,6 +65,8 @@ Commands:
   stop         Stop the VPN proxy service
   status       Check proxy status and current best node
   test         Test connectivity (Google, GitHub, OpenAI)
+  nodes        List all available nodes from subscription
+  set-filter   Set node filter regex pattern (empty = use all nodes)
   env          Print proxy environment variable export commands
   setup-env    Configure proxy environment variables in ~/.bashrc
   install      Download/reinstall the proxy core
@@ -72,6 +74,34 @@ Commands:
   update       Refresh subscription (pull new/removed nodes)
   best         Test all nodes and switch to the fastest one
 ```
+
+## Node Selection
+
+By default, SVPN uses **all nodes** in your subscription for automatic selection. You can filter nodes by region:
+
+```bash
+# List all available nodes
+python3 svpn.py nodes
+
+# Filter for US nodes only
+python3 svpn.py set-filter '(?i)us|美国|USA'
+
+# Filter for Japan nodes
+python3 svpn.py set-filter '(?i)jp|日本|Japan'
+
+# Filter for Hong Kong nodes
+python3 svpn.py set-filter '(?i)hk|香港|Hong Kong'
+
+# Clear filter (use all nodes)
+python3 svpn.py set-filter ''
+
+# Restart to apply new filter
+python3 svpn.py stop && python3 svpn.py start
+```
+
+The filter uses **regex pattern matching** on node names. Common patterns:
+- `(?i)` makes the match case-insensitive
+- Use `|` for OR matching (e.g., `us|美国|USA`)
 
 ## How It Works
 
@@ -162,9 +192,29 @@ curl -s ipinfo.io | grep country
 curl -x http://127.0.0.1:7890 -s ipinfo.io | grep country
 ```
 
-### No US nodes available
+### No nodes available / "Available proxies: 0"
 
-If `svpn.py status` shows "Available proxies: 0", your subscription may not have US nodes. The default config filters for US nodes. Edit `data/config.yaml` and modify the `filter` line in the proxy-groups section to use other regions.
+If `svpn.py status` shows 0 available proxies:
+
+1. Check what nodes are in your subscription:
+   ```bash
+   python3 svpn.py nodes
+   ```
+
+2. If you see nodes but they don't match your filter, clear the filter to use all nodes:
+   ```bash
+   python3 svpn.py set-filter ''
+   python3 svpn.py stop && python3 svpn.py start
+   ```
+
+3. If `nodes` shows no nodes, update your subscription:
+   ```bash
+   python3 svpn.py update
+   ```
+
+### Node names don't contain country codes
+
+Some subscriptions use custom node names without country identifiers. Use `svpn.py nodes` to see actual node names, then set a filter that matches them, or clear the filter to use all nodes.
 
 ## Requirements
 
