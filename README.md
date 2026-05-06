@@ -7,6 +7,7 @@ Whether your server is behind a firewall, in a restricted network, or simply nee
 ## Features
 
 - **Plug and Play**: Pure Python 3, no third-party dependencies. Automatically detects OS and architecture (Linux amd64/arm64, macOS), downloads the correct proxy core from GitHub mirrors, and guides you through subscription setup.
+- **Auto Environment Setup**: On first start, SVPN automatically configures proxy environment variables in `~/.bashrc` so all new terminals have VPN access by default.
 - **On-Demand Proxy, Zero Disruption**: SVPN runs a local proxy (default `127.0.0.1:7890` for HTTP/SOCKS5). **No iptables, no system-wide routing changes** — your existing services, APIs, and applications continue to work exactly as before. Only programs that explicitly use the proxy will route through VPN.
 - **Smart Routing**: Built-in geographic and domain-based rules ensure that traffic to local networks, private IPs, and domestic (CN) destinations goes direct, while only blocked or overseas traffic uses the VPN tunnel.
 - **Auto Best-Node Selection**: URL-Test strategy continuously measures latency across all nodes in your subscription and automatically switches to the fastest one.
@@ -31,47 +32,28 @@ On first run, SVPN will:
 1. **Download and install** the Mihomo proxy core (auto-detected for your platform).
 2. **Prompt for your subscription URL** (supports Base64, Clash YAML, and Mihomo formats).
 3. **Generate configuration** and start the proxy daemon in the background.
+4. **Automatically configure proxy environment variables** in `~/.bashrc`.
 
-### 3. Enable VPN for your applications
-
-**Option A: Set environment variables (recommended)**
+### 3. Apply environment variables
 
 ```bash
-# Print the environment commands
-python3 svpn.py env
-
-# Or set them directly:
-export http_proxy=http://127.0.0.1:7890
-export https_proxy=http://127.0.0.1:7890
-export all_proxy=socks5://127.0.0.1:7890
-
-# Now run any command that needs internet access:
-git clone https://github.com/some/repo.git
-curl https://www.google.com
-pip install some-package
-docker pull some-image
+# Apply proxy settings to current terminal
+source ~/.bashrc
 ```
 
-**Option B: For a single command**
+Or simply open a new terminal - proxy will be active automatically.
+
+### 4. Verify it's working
 
 ```bash
-http_proxy=http://127.0.0.1:7890 https_proxy=http://127.0.0.1:7890 curl https://www.google.com
-```
+# Should show VPN server location (e.g., United States), not your real location
+curl -s ipinfo.io | grep country
 
-**Option C: Persistent proxy for all new shells**
-
-Add to `~/.bashrc` or `~/.profile`:
-```bash
-export http_proxy=http://127.0.0.1:7890
-export https_proxy=http://127.0.0.1:7890
-export all_proxy=socks5://127.0.0.1:7890
-```
-
-### 4. Test connectivity
-
-```bash
+# Or run the built-in test
 python3 svpn.py test
 ```
+
+That's it! Now all your terminal applications (git, curl, pip, docker, npm, etc.) will use the VPN automatically.
 
 ## CLI Reference
 
@@ -79,11 +61,12 @@ python3 svpn.py test
 python3 svpn.py <command>
 
 Commands:
-  start        Start the VPN proxy service
+  start        Start the VPN proxy service (auto-configures ~/.bashrc)
   stop         Stop the VPN proxy service
   status       Check proxy status and current best node
-  test         Test connectivity (Google, GitHub)
+  test         Test connectivity (Google, GitHub, OpenAI)
   env          Print proxy environment variable export commands
+  setup-env    Configure proxy environment variables in ~/.bashrc
   install      Download/reinstall the proxy core
   add-sub URL  Add or update subscription URL
   update       Refresh subscription (pull new/removed nodes)
@@ -122,6 +105,21 @@ Commands:
 - Apps **without** proxy env vars → direct connection → not affected at all
 - Your web APIs, database connections, internal services all continue working normally
 
+## Environment Variables
+
+After running `svpn.py start`, the following variables are set in `~/.bashrc`:
+
+```bash
+export http_proxy=http://127.0.0.1:7890
+export https_proxy=http://127.0.0.1:7890
+export all_proxy=socks5://127.0.0.1:7890
+export HTTP_PROXY=http://127.0.0.1:7890
+export HTTPS_PROXY=http://127.0.0.1:7890
+export ALL_PROXY=socks5://127.0.0.1:7890
+export no_proxy=localhost,127.0.0.1,::1,*.local
+export NO_PROXY=localhost,127.0.0.1,::1,*.local
+```
+
 ## Data Directory
 
 SVPN creates a `data/` directory alongside the script:
@@ -135,8 +133,45 @@ data/
 └── config.yaml     # Generated routing configuration
 ```
 
+## Troubleshooting
+
+### Proxy running but not working
+
+**Symptom**: `svpn.py status` shows the proxy is running, but `curl ipinfo.io` still shows your real location.
+
+**Solution**:
+
+```bash
+# Check if proxy env vars are set
+echo $http_proxy
+
+# If empty, apply them
+source ~/.bashrc
+
+# Or run the setup command
+python3 svpn.py setup-env
+```
+
+### Verify proxy is correctly routing traffic
+
+```bash
+# Without proxy (shows your real IP)
+curl -s ipinfo.io | grep country
+
+# With proxy (should show VPN server country, e.g., "US")
+curl -x http://127.0.0.1:7890 -s ipinfo.io | grep country
+```
+
+### No US nodes available
+
+If `svpn.py status` shows "Available proxies: 0", your subscription may not have US nodes. The default config filters for US nodes. Edit `data/config.yaml` and modify the `filter` line in the proxy-groups section to use other regions.
+
 ## Requirements
 
 - Python 3.6+
 - Linux (amd64/arm64) or macOS
 - A valid proxy subscription URL (from your VPN service provider)
+
+## License
+
+MIT License

@@ -25,6 +25,7 @@ PID_FILE = os.path.join(DATA_DIR, "mihomo.pid")
 MIHOMO_BIN = os.path.join(DATA_DIR, "mihomo")
 PROXY_PORT = 7890
 API_PORT = 9090
+US_NODE_FILTER = r"(?i)(^|[^\w])(US|USA|United States|America|美国)([^\w]|$)"
 
 GH_MIRRORS = [
     "https://gh-proxy.com/",
@@ -54,12 +55,12 @@ def download_url_with_retry(url, dest_path, desc="file"):
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    handler = None
+    handlers = [urllib.request.HTTPSHandler(context=ctx)]
     proxy = os.environ.get("https_proxy") or os.environ.get("http_proxy")
     if proxy:
-        handler = urllib.request.ProxyHandler({"http": proxy, "https": proxy})
-    opener = urllib.request.build_opener(handler) if handler else urllib.request.build_opener()
-    with opener.open(req, context=ctx) as response, open(dest_path, "wb") as out_file:
+        handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+    opener = urllib.request.build_opener(*handlers)
+    with opener.open(req) as response, open(dest_path, "wb") as out_file:
         shutil.copyfileobj(response, out_file)
     return True
 
@@ -154,6 +155,7 @@ proxy-groups:
     type: url-test
     use:
       - svpn-provider
+    filter: '{US_NODE_FILTER}'
     url: 'http://www.gstatic.com/generate_204'
     interval: 300
     tolerance: 50
@@ -267,20 +269,51 @@ def start_proxy():
 
     if wait_for_port(API_PORT):
         print(f"VPN proxy started successfully (PID: {proc.pid}).")
+        setup_persistent_proxy()
         print_proxy_usage()
     else:
         print(f"VPN proxy process launched (PID: {proc.pid}), but API not responding yet.")
         print(f"Check logs: cat {log_file}")
 
+def setup_persistent_proxy():
+    """Configure proxy environment variables in ~/.bashrc for all terminals."""
+    bashrc = os.path.expanduser("~/.bashrc")
+    marker = "# SVPN Proxy Settings"
+
+    # Check if already configured
+    if os.path.exists(bashrc):
+        with open(bashrc, "r") as f:
+            content = f.read()
+        if marker in content:
+            print("Proxy environment already configured in ~/.bashrc")
+            return
+
+    proxy_config = f"""
+
+{marker}
+export http_proxy=http://127.0.0.1:{PROXY_PORT}
+export https_proxy=http://127.0.0.1:{PROXY_PORT}
+export all_proxy=socks5://127.0.0.1:{PROXY_PORT}
+export HTTP_PROXY=http://127.0.0.1:{PROXY_PORT}
+export HTTPS_PROXY=http://127.0.0.1:{PROXY_PORT}
+export ALL_PROXY=socks5://127.0.0.1:{PROXY_PORT}
+export no_proxy=localhost,127.0.0.1,::1,*.local
+export NO_PROXY=localhost,127.0.0.1,::1,*.local
+"""
+    with open(bashrc, "a") as f:
+        f.write(proxy_config)
+    print("✓ Proxy environment variables added to ~/.bashrc")
+    print("  Run 'source ~/.bashrc' or open a new terminal to apply.")
+
+
 def print_proxy_usage():
     print(f"\n  Proxy is running on 127.0.0.1:{PROXY_PORT} (HTTP & SOCKS5)")
-    print("  To enable VPN for any application, run:")
-    print(f"    export http_proxy=http://127.0.0.1:{PROXY_PORT}")
-    print(f"    export https_proxy=http://127.0.0.1:{PROXY_PORT}")
-    print(f"    export all_proxy=socks5://127.0.0.1:{PROXY_PORT}")
-    print("  Or for a single command:")
+    print("  Environment variables have been configured in ~/.bashrc")
+    print("  To apply in current terminal, run:")
+    print("    source ~/.bashrc")
+    print("\n  Or open a new terminal - proxy will be active automatically.")
+    print("\n  To use VPN for a single command without env vars:")
     print(f"    http_proxy=http://127.0.0.1:{PROXY_PORT} https_proxy=http://127.0.0.1:{PROXY_PORT} <your-command>")
-    print("  Existing services are NOT affected unless you set these variables for them.")
 
 def stop_proxy():
     if not is_running():
@@ -380,6 +413,7 @@ def test_connection():
     targets = {
         "Google": "https://www.google.com",
         "GitHub": "https://github.com",
+        "OpenAI": "https://openai.com",
     }
 
     print("Testing connectivity through VPN proxy...")
@@ -425,6 +459,7 @@ def main():
     subparsers.add_parser("best", help="Test all nodes and switch to the best one")
     subparsers.add_parser("test", help="Test connectivity through the VPN proxy")
     subparsers.add_parser("env", help="Print proxy environment variable commands")
+    subparsers.add_parser("setup-env", help="Configure proxy environment in ~/.bashrc")
 
     parser_add_sub = subparsers.add_parser("add-sub", help="Add or update subscription URL")
     parser_add_sub.add_argument("url", help="Subscription URL")
@@ -449,6 +484,8 @@ def main():
         test_connection()
     elif args.command == "env":
         shell_env()
+    elif args.command == "setup-env":
+        setup_persistent_proxy()
     else:
         parser.print_help()
 
