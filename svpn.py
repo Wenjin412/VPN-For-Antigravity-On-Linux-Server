@@ -21,14 +21,11 @@ import signal
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.yaml")
 SUB_FILE = os.path.join(DATA_DIR, "sub_url.txt")
-FILTER_FILE = os.path.join(DATA_DIR, "node_filter.txt")
+SELECTED_NODE_FILE = os.path.join(DATA_DIR, "selected_node.txt")
 PID_FILE = os.path.join(DATA_DIR, "mihomo.pid")
 MIHOMO_BIN = os.path.join(DATA_DIR, "mihomo")
 PROXY_PORT = 7890
 API_PORT = 9090
-# Default filter: empty string means use all nodes
-DEFAULT_NODE_FILTER = ""
-US_NODE_FILTER = r"(?i)(^|[^\w])(US|USA|United States|America|美国)([^\w]|$)"
 
 GH_MIRRORS = [
     "https://gh-proxy.com/",
@@ -117,22 +114,23 @@ def get_subscription():
         url = f.read().strip()
         return url if url else None
 
-def set_node_filter(filter_pattern):
-    """Set node filter pattern. Empty string means use all nodes."""
-    ensure_data_dir()
-    with open(FILTER_FILE, "w") as f:
-        f.write(filter_pattern.strip())
-    if filter_pattern:
-        print(f"Node filter saved: '{filter_pattern}'")
-    else:
-        print("Node filter cleared (will use all nodes)")
+def get_selected_node():
+    """Get user selected node. Returns None if not set (use auto selection)."""
+    if not os.path.exists(SELECTED_NODE_FILE):
+        return None
+    with open(SELECTED_NODE_FILE, "r") as f:
+        node = f.read().strip()
+        return node if node else None
 
-def get_node_filter():
-    """Get node filter pattern. Returns empty string if not set (use all nodes)."""
-    if not os.path.exists(FILTER_FILE):
-        return DEFAULT_NODE_FILTER
-    with open(FILTER_FILE, "r") as f:
-        return f.read().strip()
+def set_selected_node(node_name):
+    """Set the selected node. Empty string clears selection (use auto)."""
+    ensure_data_dir()
+    with open(SELECTED_NODE_FILE, "w") as f:
+        f.write(node_name.strip())
+    if node_name:
+        print(f"Selected node saved: {node_name}")
+    else:
+        print("Node selection cleared (will use auto selection)")
 
 def generate_config():
     sub_url = get_subscription()
@@ -144,8 +142,30 @@ def generate_config():
             sys.exit(1)
         set_subscription(sub_url)
 
-    node_filter = get_node_filter()
-    filter_line = f"    filter: '{node_filter}'" if node_filter else ""
+    selected_node = get_selected_node()
+
+    # Build proxy-group config based on selection mode
+    if selected_node:
+        # Manual selection mode: use specific node
+        proxy_group_config = f"""\
+proxy-groups:
+  - name: PROXY
+    type: select
+    use:
+      - svpn-provider
+    proxies:
+      - '{selected_node}'"""
+    else:
+        # Auto selection mode: use url-test with all nodes
+        proxy_group_config = """\
+proxy-groups:
+  - name: PROXY
+    type: url-test
+    use:
+      - svpn-provider
+    url: 'http://www.gstatic.com/generate_204'
+    interval: 300
+    tolerance: 50"""
 
     config_yaml = f"""\
 mixed-port: {PROXY_PORT}
@@ -173,15 +193,7 @@ proxy-providers:
       interval: 300
       url: http://www.gstatic.com/generate_204
 
-proxy-groups:
-  - name: PROXY
-    type: url-test
-    use:
-      - svpn-provider
-{filter_line}
-    url: 'http://www.gstatic.com/generate_204'
-    interval: 300
-    tolerance: 50
+{proxy_group_config}
 
 rules:
   - DOMAIN-SUFFIX,google.com,PROXY
@@ -396,16 +408,22 @@ def status_proxy():
     if resp:
         print("VPN proxy is RUNNING.")
         now_active = resp.get("now", "Unknown")
-        print(f"Active node (auto-selected): {now_active}")
+        selected = get_selected_node()
+        if selected:
+            print(f"Active node (manually selected): {now_active}")
+        else:
+            print(f"Active node (auto-selected): {now_active}")
         all_proxies = resp.get("all", [])
         print(f"Available proxies: {len(all_proxies)}")
-        node_filter = get_node_filter()
-        if node_filter:
-            print(f"Node filter: '{node_filter}'")
-        else:
-            print("Node filter: (none - using all nodes)")
     else:
         print("VPN proxy is running but API is inaccessible (maybe starting up?).")
+
+def get_nodes_list():
+    """Get list of all nodes from subscription. Returns list of dicts."""
+    resp = api_request("GET", "/providers/proxies/svpn-provider")
+    if not resp:
+        return None
+    return resp.get("proxies", [])
 
 def list_nodes():
     """List all available nodes from the subscription."""
@@ -413,32 +431,110 @@ def list_nodes():
         print("VPN proxy must be running. Run 'start' first.")
         return
 
-    resp = api_request("GET", "/providers/proxies/svpn-provider")
-    if not resp:
+    proxies = get_nodes_list()
+    if proxies is None:
         print("Failed to get node list. Try 'update' to refresh subscription.")
         return
 
-    proxies = resp.get("proxies", [])
     if not proxies:
         print("No proxies found in subscription.")
         return
 
+    selected = get_selected_node()
     print(f"Total nodes in subscription: {len(proxies)}")
+    if selected:
+        print(f"Current selected node: {selected}")
     print("\nAvailable nodes:")
-    print("-" * 50)
+    print("-" * 60)
     for i, proxy in enumerate(proxies, 1):
         name = proxy.get("name", "Unknown")
         node_type = proxy.get("type", "Unknown")
         alive = proxy.get("alive", False)
-        delay = proxy.get("history", [{}])[-1].get("delay", "N/A") if proxy.get("history") else "N/A"
+        history = proxy.get("history", [])
+        delay = history[-1].get("delay", "N/A") if history else "N/A"
+        status = "✓" if alive else "✗"
+        marker = " <- SELECTED" if selected and name == selected else ""
+        print(f"  {i:3d}. [{status}] {name} ({node_type}) - {delay}ms{marker}")
+    print("-" * 60)
+    print("\nTo select a node: python3 svpn.py select")
+    print("To use auto selection: python3 svpn.py auto")
+
+def select_node():
+    """Interactive node selection."""
+    if not is_running():
+        print("VPN proxy must be running. Run 'start' first.")
+        return
+
+    proxies = get_nodes_list()
+    if proxies is None:
+        print("Failed to get node list. Try 'update' to refresh subscription.")
+        return
+
+    if not proxies:
+        print("No proxies found in subscription.")
+        return
+
+    print(f"\nTotal nodes available: {len(proxies)}")
+    print("\nNode list:")
+    print("-" * 60)
+    for i, proxy in enumerate(proxies, 1):
+        name = proxy.get("name", "Unknown")
+        node_type = proxy.get("type", "Unknown")
+        alive = proxy.get("alive", False)
+        history = proxy.get("history", [])
+        delay = history[-1].get("delay", "N/A") if history else "N/A"
         status = "✓" if alive else "✗"
         print(f"  {i:3d}. [{status}] {name} ({node_type}) - {delay}ms")
-    print("-" * 50)
-    print(f"\nCurrent filter: '{get_node_filter()}'" if get_node_filter() else "\nCurrent filter: (none - using all nodes)")
-    print("\nTo filter nodes, use: python3 svpn.py set-filter '<regex_pattern>'")
-    print("Examples:")
-    print("  python3 svpn.py set-filter '(?i)us|美国'  # US nodes only")
-    print("  python3 svpn.py set-filter ''             # Use all nodes")
+    print("-" * 60)
+
+    # Get user selection
+    while True:
+        try:
+            choice = input("\nEnter node number to select (or 'q' to cancel): ").strip()
+            if choice.lower() == 'q':
+                print("Cancelled.")
+                return
+
+            idx = int(choice)
+            if 1 <= idx <= len(proxies):
+                selected = proxies[idx - 1]
+                node_name = selected.get("name")
+                if not node_name:
+                    print("Invalid node.")
+                    continue
+                break
+            else:
+                print(f"Please enter a number between 1 and {len(proxies)}")
+        except ValueError:
+            print("Invalid input. Enter a number or 'q' to cancel.")
+
+    # Save selection
+    set_selected_node(node_name)
+
+    # Restart to apply
+    print("\nRestarting VPN to apply selection...")
+    stop_proxy()
+    time.sleep(1)
+    start_proxy()
+
+    # Wait for connection
+    print("\nWaiting for connection...")
+    time.sleep(2)
+
+    # Test connection
+    print("\nTesting connection...")
+    test_connection()
+
+def auto_selection():
+    """Switch to auto node selection mode."""
+    set_selected_node("")
+    print("\nRestarting VPN to apply auto selection...")
+    stop_proxy()
+    time.sleep(1)
+    start_proxy()
+    print("\nAuto selection enabled. Testing connection...")
+    time.sleep(2)
+    test_connection()
 
 def update_subscription():
     if not is_running():
@@ -516,18 +612,17 @@ def main():
     subparsers.add_parser("start", help="Start the VPN proxy service")
     subparsers.add_parser("stop", help="Stop the VPN proxy service")
     subparsers.add_parser("status", help="Check proxy status and current node")
+    subparsers.add_parser("nodes", help="List all available nodes from subscription")
+    subparsers.add_parser("select", help="Interactively select a node to use")
+    subparsers.add_parser("auto", help="Switch to auto node selection mode")
+    subparsers.add_parser("test", help="Test connectivity through the VPN proxy")
     subparsers.add_parser("update", help="Update node subscription from provider URL")
     subparsers.add_parser("best", help="Test all nodes and switch to the best one")
-    subparsers.add_parser("test", help="Test connectivity through the VPN proxy")
     subparsers.add_parser("env", help="Print proxy environment variable commands")
     subparsers.add_parser("setup-env", help="Configure proxy environment in ~/.bashrc")
-    subparsers.add_parser("nodes", help="List all available nodes from subscription")
 
     parser_add_sub = subparsers.add_parser("add-sub", help="Add or update subscription URL")
     parser_add_sub.add_argument("url", help="Subscription URL")
-
-    parser_set_filter = subparsers.add_parser("set-filter", help="Set node filter regex (empty to use all)")
-    parser_set_filter.add_argument("pattern", nargs="?", default="", help="Regex pattern to filter nodes")
 
     args = parser.parse_args()
 
@@ -541,23 +636,22 @@ def main():
         stop_proxy()
     elif args.command == "status":
         status_proxy()
+    elif args.command == "nodes":
+        list_nodes()
+    elif args.command == "select":
+        select_node()
+    elif args.command == "auto":
+        auto_selection()
+    elif args.command == "test":
+        test_connection()
     elif args.command == "update":
         update_subscription()
     elif args.command == "best":
         best_node()
-    elif args.command == "test":
-        test_connection()
     elif args.command == "env":
         shell_env()
     elif args.command == "setup-env":
         setup_persistent_proxy()
-    elif args.command == "nodes":
-        list_nodes()
-    elif args.command == "set-filter":
-        set_node_filter(args.pattern)
-        if is_running():
-            print("\nRestart VPN to apply new filter:")
-            print("  python3 svpn.py stop && python3 svpn.py start")
     else:
         parser.print_help()
 

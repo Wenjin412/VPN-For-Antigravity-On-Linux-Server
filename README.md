@@ -63,45 +63,50 @@ python3 svpn.py <command>
 Commands:
   start        Start the VPN proxy service (auto-configures ~/.bashrc)
   stop         Stop the VPN proxy service
-  status       Check proxy status and current best node
-  test         Test connectivity (Google, GitHub, OpenAI)
+  status       Check proxy status and current node
   nodes        List all available nodes from subscription
-  set-filter   Set node filter regex pattern (empty = use all nodes)
+  select       Interactively select a node to use
+  auto         Switch to auto node selection mode
+  test         Test connectivity (Google, GitHub, OpenAI)
+  update       Refresh subscription (pull new/removed nodes)
+  best         Test all nodes and find the best one
   env          Print proxy environment variable export commands
   setup-env    Configure proxy environment variables in ~/.bashrc
   install      Download/reinstall the proxy core
   add-sub URL  Add or update subscription URL
-  update       Refresh subscription (pull new/removed nodes)
-  best         Test all nodes and switch to the fastest one
 ```
 
 ## Node Selection
 
-By default, SVPN uses **all nodes** in your subscription for automatic selection. You can filter nodes by region:
+SVPN supports two node selection modes:
+
+### Manual Selection (Recommended)
+
+Select a specific node from your subscription:
 
 ```bash
-# List all available nodes
+# List all nodes
 python3 svpn.py nodes
 
-# Filter for US nodes only
-python3 svpn.py set-filter '(?i)us|美国|USA'
-
-# Filter for Japan nodes
-python3 svpn.py set-filter '(?i)jp|日本|Japan'
-
-# Filter for Hong Kong nodes
-python3 svpn.py set-filter '(?i)hk|香港|Hong Kong'
-
-# Clear filter (use all nodes)
-python3 svpn.py set-filter ''
-
-# Restart to apply new filter
-python3 svpn.py stop && python3 svpn.py start
+# Interactively select a node
+python3 svpn.py select
 ```
 
-The filter uses **regex pattern matching** on node names. Common patterns:
-- `(?i)` makes the match case-insensitive
-- Use `|` for OR matching (e.g., `us|美国|USA`)
+The `select` command will:
+1. Show all available nodes with latency info
+2. Let you choose one by number
+3. Restart the VPN with your selection
+4. Automatically test the connection
+
+### Auto Selection
+
+Let SVPN automatically pick the fastest node:
+
+```bash
+python3 svpn.py auto
+```
+
+This uses url-test to continuously measure latency and switch to the best node.
 
 ## How It Works
 
@@ -156,11 +161,12 @@ SVPN creates a `data/` directory alongside the script:
 
 ```
 data/
-├── mihomo          # Proxy core binary
-├── mihomo.pid      # Process ID file
-├── mihomo.log      # Runtime logs
-├── sub_url.txt     # Saved subscription URL
-└── config.yaml     # Generated routing configuration
+├── mihomo           # Proxy core binary
+├── mihomo.pid       # Process ID file
+├── mihomo.log       # Runtime logs
+├── sub_url.txt      # Saved subscription URL
+├── selected_node.txt # User selected node (if manual mode)
+└── config.yaml      # Generated routing configuration
 ```
 
 ## Troubleshooting
@@ -185,36 +191,39 @@ python3 svpn.py setup-env
 ### Verify proxy is correctly routing traffic
 
 ```bash
-# Without proxy (shows your real IP)
+# Should show VPN server country (e.g., "US"), not your real location
 curl -s ipinfo.io | grep country
 
-# With proxy (should show VPN server country, e.g., "US")
-curl -x http://127.0.0.1:7890 -s ipinfo.io | grep country
+# Or run the built-in test
+python3 svpn.py test
 ```
 
 ### No nodes available / "Available proxies: 0"
-
-If `svpn.py status` shows 0 available proxies:
 
 1. Check what nodes are in your subscription:
    ```bash
    python3 svpn.py nodes
    ```
 
-2. If you see nodes but they don't match your filter, clear the filter to use all nodes:
-   ```bash
-   python3 svpn.py set-filter ''
-   python3 svpn.py stop && python3 svpn.py start
-   ```
-
-3. If `nodes` shows no nodes, update your subscription:
+2. If no nodes shown, update your subscription:
    ```bash
    python3 svpn.py update
    ```
 
-### Node names don't contain country codes
+3. Select a node manually:
+   ```bash
+   python3 svpn.py select
+   ```
 
-Some subscriptions use custom node names without country identifiers. Use `svpn.py nodes` to see actual node names, then set a filter that matches them, or clear the filter to use all nodes.
+### Connection test fails
+
+Try selecting a different node:
+
+```bash
+python3 svpn.py select
+```
+
+Some nodes may be offline or blocked. The `select` command shows node status (✓ = alive, ✗ = offline).
 
 ## Requirements
 
